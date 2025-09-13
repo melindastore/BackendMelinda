@@ -163,8 +163,11 @@ app.delete('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) =
   }
 });
 
-app.listen({ port: 3333, host: '0.0.0.0' }).then(() => {
-  console.log('🚀 Servidor rodando em http://localhost:3333');
+app.listen({ 
+  port: process.env.PORT || 3333, 
+  host: '0.0.0.0' 
+}).then(() => {
+  console.log(`🚀 Servidor rodando em http://localhost:${process.env.PORT || 3333}`);
 });
 
 
