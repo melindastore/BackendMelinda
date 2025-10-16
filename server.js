@@ -6,32 +6,38 @@ import pkg from 'pg';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { createClient } from '@supabase/supabase-js';
+import { v4 as uuidv4 } from 'uuid';
 
 const { Pool } = pkg;
 
+// ======================
+// CONEXÃO BANCO DE DADOS
+// ======================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
 });
 
+// ======================
+// CONEXÃO SUPABASE
+// ======================
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
+
+// ======================
+// CONFIGURAÇÃO FASTIFY
+// ======================
 const app = Fastify();
 app.register(cors, {
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 });
-
-// ⬆️ AQUI: limite aumentado e Base64 removido
-app.register(multipart, {
-  limits: {
-    fileSize: 20 * 1024 * 1024, // até 20MB
-  },
-});
-
-// Supabase client
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+app.register(multipart);
 
 // ======================
-// FUNÇÃO MIDDLEWARE JWT
+// MIDDLEWARE JWT
 // ======================
 async function verificarAdmin(req, reply) {
   try {
@@ -52,7 +58,7 @@ async function verificarAdmin(req, reply) {
 }
 
 // ======================
-// LOGIN DO ADMIN
+// LOGIN ADMIN
 // ======================
 app.post('/login', async (req, reply) => {
   const { usuario, senha } = req.body;
@@ -103,32 +109,28 @@ app.get('/produtos/:categoria', async (req) => {
 });
 
 // ======================
-// CADASTRAR PRODUTO (com Supabase Storage)
+// CADASTRAR PRODUTO
 // ======================
 app.post('/produtos', { preHandler: verificarAdmin }, async (req, reply) => {
   try {
     const parts = req.parts();
-    let nome, descricao, preco, categoria;
-    let imagemUrl = null;
+    let nome, descricao, preco, categoria, imagemUrl = null;
 
     for await (const part of parts) {
       if (part.file) {
-        // Faz upload pro Supabase direto
-        const fileName = `produtos/${Date.now()}-${part.filename}`;
-        const { data, error } = await supabase.storage
-          .from('produtos') // bucket
-          .upload(fileName, part.file, {
-            contentType: part.mimetype,
-          });
+        const buffer = await part.toBuffer();
+        const fileName = `${uuidv4()}-${part.filename}`;
+        const { error } = await supabase.storage
+          .from('produtos')
+          .upload(fileName, buffer, { contentType: part.mimetype });
 
         if (error) throw error;
 
-        // Gera URL pública
-        const { data: publicUrl } = supabase.storage
+        const { data } = supabase.storage
           .from('produtos')
           .getPublicUrl(fileName);
 
-        imagemUrl = publicUrl.publicUrl;
+        imagemUrl = data.publicUrl;
       } else {
         if (part.fieldname === 'nome') nome = part.value;
         if (part.fieldname === 'descricao') descricao = part.value;
@@ -139,7 +141,8 @@ app.post('/produtos', { preHandler: verificarAdmin }, async (req, reply) => {
 
     const result = await pool.query(
       `INSERT INTO produtos (nome, descricao, preco, imagem, categoria)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
       [nome, descricao, parseFloat(preco), imagemUrl, categoria]
     );
 
@@ -155,26 +158,25 @@ app.post('/produtos', { preHandler: verificarAdmin }, async (req, reply) => {
 // ======================
 app.put('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) => {
   try {
-    const parts = req.parts();
     const { id } = req.params;
-
-    let nome, descricao, preco, categoria;
-    let imagemUrl = null;
+    const parts = req.parts();
+    let nome, descricao, preco, categoria, imagemUrl = null;
 
     for await (const part of parts) {
       if (part.file) {
-        const fileName = `produtos/${Date.now()}-${part.filename}`;
-        const { data, error } = await supabase.storage
+        const buffer = await part.toBuffer();
+        const fileName = `${uuidv4()}-${part.filename}`;
+        const { error } = await supabase.storage
           .from('produtos')
-          .upload(fileName, part.file, { contentType: part.mimetype });
+          .upload(fileName, buffer, { contentType: part.mimetype });
 
         if (error) throw error;
 
-        const { data: publicUrl } = supabase.storage
+        const { data } = supabase.storage
           .from('produtos')
           .getPublicUrl(fileName);
 
-        imagemUrl = publicUrl.publicUrl;
+        imagemUrl = data.publicUrl;
       } else {
         if (part.fieldname === 'nome') nome = part.value;
         if (part.fieldname === 'descricao') descricao = part.value;
@@ -183,9 +185,15 @@ app.put('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) => {
       }
     }
 
+    // Se não veio imagem nova, mantém a antiga
+    if (!imagemUrl) {
+      const old = await pool.query('SELECT imagem FROM produtos WHERE id=$1', [id]);
+      imagemUrl = old.rows[0]?.imagem || null;
+    }
+
     const result = await pool.query(
       `UPDATE produtos
-       SET nome=$1, descricao=$2, preco=$3, imagem=COALESCE($4, imagem), categoria=$5
+       SET nome=$1, descricao=$2, preco=$3, imagem=$4, categoria=$5
        WHERE id=$6 RETURNING *`,
       [nome, descricao, parseFloat(preco), imagemUrl, categoria, id]
     );
@@ -211,12 +219,16 @@ app.delete('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) =
   }
 });
 
+// ======================
+// INICIAR SERVIDOR
+// ======================
 app.listen({
   port: process.env.PORT || 3333,
   host: '0.0.0.0',
 }).then(() => {
   console.log(`🚀 Servidor rodando em http://localhost:${process.env.PORT || 3333}`);
 });
+
 
 
 
