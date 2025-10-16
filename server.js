@@ -59,7 +59,7 @@ app.post('/login', async (req, reply) => {
 });
 
 // ======================
-// LISTAR PRODUTOS (livre)
+// LISTAR PRODUTOS
 // ======================
 app.get('/produtos', async () => {
   const result = await pool.query('SELECT * FROM produtos ORDER BY id DESC');
@@ -82,7 +82,7 @@ app.get('/produtos/:categoria', async (req) => {
 app.post('/produtos', { preHandler: verificarAdmin }, async (req, reply) => {
   try {
     const parts = req.parts();
-    let nome, descricao, preco, categoria, imagemUrl = '';
+    let nome = '', descricao = '', preco = 0, categoria = '', imagemUrl = '';
 
     for await (const part of parts) {
       if (part.file) {
@@ -90,7 +90,11 @@ app.post('/produtos', { preHandler: verificarAdmin }, async (req, reply) => {
         const ext = part.mimetype.split('/')[1] || 'png';
         const fileName = `produtos/${Date.now()}-${part.filename || 'img'}.${ext}`;
 
-        const { error } = await supabase.storage.from('produtos').upload(fileName, buffer, { contentType: part.mimetype, upsert: true });
+        const { error } = await supabase.storage.from('produtos').upload(fileName, buffer, {
+          contentType: part.mimetype,
+          upsert: true,
+        });
+
         if (error) return reply.code(500).send({ error: 'Erro ao enviar imagem para Supabase' });
 
         const { data } = supabase.storage.from('produtos').getPublicUrl(fileName);
@@ -98,7 +102,7 @@ app.post('/produtos', { preHandler: verificarAdmin }, async (req, reply) => {
       } else {
         if (part.fieldname === 'nome') nome = part.value;
         if (part.fieldname === 'descricao') descricao = part.value;
-        if (part.fieldname === 'preco') preco = part.value;
+        if (part.fieldname === 'preco') preco = parseFloat(part.value);
         if (part.fieldname === 'categoria') categoria = part.value;
       }
     }
@@ -106,7 +110,7 @@ app.post('/produtos', { preHandler: verificarAdmin }, async (req, reply) => {
     const result = await pool.query(
       `INSERT INTO produtos (nome, descricao, preco, imagem, categoria)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [nome, descricao, parseFloat(preco), imagemUrl, categoria]
+      [nome, descricao, preco, imagemUrl, categoria]
     );
 
     reply.code(201).send(result.rows[0]);
@@ -132,7 +136,10 @@ app.put('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) => {
           const ext = part.mimetype.split('/')[1] || 'png';
           const fileName = `produtos/${Date.now()}-${part.filename || 'img'}.${ext}`;
 
-          const { error } = await supabase.storage.from('produtos').upload(fileName, buffer, { contentType: part.mimetype, upsert: true });
+          const { error } = await supabase.storage.from('produtos').upload(fileName, buffer, {
+            contentType: part.mimetype,
+            upsert: true,
+          });
           if (error) return reply.code(500).send({ error: 'Erro ao enviar imagem para Supabase' });
 
           const { data } = supabase.storage.from('produtos').getPublicUrl(fileName);
@@ -140,7 +147,7 @@ app.put('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) => {
         } else {
           if (part.fieldname === 'nome') nome = part.value;
           if (part.fieldname === 'descricao') descricao = part.value;
-          if (part.fieldname === 'preco') preco = part.value;
+          if (part.fieldname === 'preco') preco = parseFloat(part.value);
           if (part.fieldname === 'categoria') categoria = part.value;
         }
       }
@@ -150,7 +157,7 @@ app.put('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) => {
       descricao = fields.descricao;
       preco = parseFloat(fields.preco);
       categoria = fields.categoria;
-      imagemUrl = fields.imagem;
+      imagemUrl = fields.imagem; // caso queira manter a imagem antiga se não enviar nova
     }
 
     const result = await pool.query(
