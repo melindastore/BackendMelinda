@@ -23,23 +23,23 @@ const pool = new Pool({
 // ======================
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY // <- usa a service role
 );
 
 // ======================
 // CONFIGURAÇÃO FASTIFY
 // ======================
 const app = Fastify({
-  bodyLimit: 10485760, // 10 MB
+  bodyLimit: 10 * 1024 * 1024, // 10MB
 });
+
 app.register(cors, {
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 });
+
 app.register(multipart, {
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 10 MB
-  },
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 // ======================
@@ -73,16 +73,15 @@ app.post('/login', async (req, reply) => {
     'SELECT * FROM admins WHERE usuario=$1 LIMIT 1',
     [usuario]
   );
-  if (result.rows.length === 0) {
+
+  if (result.rows.length === 0)
     return reply.code(401).send({ error: 'Usuário não encontrado' });
-  }
 
   const admin = result.rows[0];
   const senhaValida = await bcrypt.compare(senha, admin.senha);
 
-  if (!senhaValida) {
+  if (!senhaValida)
     return reply.code(401).send({ error: 'Senha incorreta' });
-  }
 
   const token = jwt.sign(
     { id: admin.id, usuario: admin.usuario, admin: true },
@@ -103,14 +102,16 @@ app.get('/produtos', async () => {
 
 app.get('/produtos/:categoria', async (req) => {
   const { categoria } = req.params;
-  if (categoria === 'all') {
-    const result = await pool.query('SELECT * FROM produtos ORDER BY id DESC');
-    return result.rows;
-  }
-  const result = await pool.query(
-    'SELECT * FROM produtos WHERE categoria = $1 ORDER BY id DESC',
-    [categoria]
-  );
+  const query =
+    categoria === 'all'
+      ? 'SELECT * FROM produtos ORDER BY id DESC'
+      : 'SELECT * FROM produtos WHERE categoria = $1 ORDER BY id DESC';
+
+  const result =
+    categoria === 'all'
+      ? await pool.query(query)
+      : await pool.query(query, [categoria]);
+
   return result.rows;
 });
 
@@ -124,21 +125,26 @@ app.post('/produtos', { preHandler: verificarAdmin }, async (req, reply) => {
 
     for await (const part of parts) {
       if (part.file) {
-        // Upload no Supabase
         const buffer = await part.toBuffer();
         const fileName = `${uuidv4()}-${part.filename}`;
+        const bucket = 'produtos';
 
         const { error: uploadError } = await supabase.storage
-          .from('produtos')
-          .upload(fileName, buffer, { contentType: part.mimetype });
+          .from(bucket)
+          .upload(fileName, buffer, { contentType: part.mimetype, upsert: true });
 
         if (uploadError) throw uploadError;
 
-        const { data: publicData } = supabase.storage
-          .from('produtos')
+        const { data: publicData, error: publicError } = await supabase
+          .storage
+          .from(bucket)
           .getPublicUrl(fileName);
 
-        imagemUrl = publicData.publicUrl;
+        if (publicError) {
+          imagemUrl = `${process.env.SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/public/${bucket}/${encodeURIComponent(fileName)}`;
+        } else {
+          imagemUrl = publicData?.publicUrl;
+        }
       } else {
         if (part.fieldname === 'nome') nome = part.value;
         if (part.fieldname === 'descricao') descricao = part.value;
@@ -174,17 +180,24 @@ app.put('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) => {
       if (part.file) {
         const buffer = await part.toBuffer();
         const fileName = `${uuidv4()}-${part.filename}`;
+        const bucket = 'produtos';
+
         const { error: uploadError } = await supabase.storage
-          .from('produtos')
-          .upload(fileName, buffer, { contentType: part.mimetype });
+          .from(bucket)
+          .upload(fileName, buffer, { contentType: part.mimetype, upsert: true });
 
         if (uploadError) throw uploadError;
 
-        const { data: publicData } = supabase.storage
-          .from('produtos')
+        const { data: publicData, error: publicError } = await supabase
+          .storage
+          .from(bucket)
           .getPublicUrl(fileName);
 
-        imagemUrl = publicData.publicUrl;
+        if (publicError) {
+          imagemUrl = `${process.env.SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/public/${bucket}/${encodeURIComponent(fileName)}`;
+        } else {
+          imagemUrl = publicData?.publicUrl;
+        }
       } else {
         if (part.fieldname === 'nome') nome = part.value;
         if (part.fieldname === 'descricao') descricao = part.value;
