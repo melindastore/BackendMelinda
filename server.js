@@ -6,12 +6,12 @@ import pkg from 'pg';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { createClient } from '@supabase/supabase-js';
-import { randomUUID } from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 
 const { Pool } = pkg;
 
 // ======================
-// BANCO DE DADOS (Neon)
+// CONEXÃO COM O POSTGRES (Neon)
 // ======================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -19,23 +19,22 @@ const pool = new Pool({
 });
 
 // ======================
-// SUPABASE
+// CONEXÃO COM SUPABASE
 // ======================
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
 
-const app = Fastify();
+// ======================
+// CONFIGURAÇÃO FASTIFY
+// ======================
+const app = Fastify({ bodyLimit: 10485760 });
 app.register(cors, {
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 });
-app.register(multipart, {
-  limits: {
-    fileSize: 10 * 1024 * 1024, // até 10 MB
-  },
-});
+app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } });
 
 // ======================
 // MIDDLEWARE JWT
@@ -47,19 +46,16 @@ async function verificarAdmin(req, reply) {
 
     const token = auth.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    if (!decoded.admin) {
-      return reply.code(403).send({ error: 'Acesso negado' });
-    }
+    if (!decoded.admin) return reply.code(403).send({ error: 'Acesso negado' });
 
     req.user = decoded;
-  } catch (err) {
+  } catch {
     return reply.code(401).send({ error: 'Token inválido' });
   }
 }
 
 // ======================
-// LOGIN DO ADMIN
+// LOGIN ADMIN
 // ======================
 app.post('/login', async (req, reply) => {
   const { usuario, senha } = req.body;
@@ -95,14 +91,12 @@ app.get('/produtos', async () => {
 
 app.get('/produtos/:categoria', async (req) => {
   const { categoria } = req.params;
-  if (categoria === 'all') {
-    const result = await pool.query('SELECT * FROM produtos ORDER BY id DESC');
-    return result.rows;
-  }
-  const result = await pool.query(
-    'SELECT * FROM produtos WHERE categoria = $1 ORDER BY id DESC',
-    [categoria]
-  );
+  const query =
+    categoria === 'all'
+      ? 'SELECT * FROM produtos ORDER BY id DESC'
+      : 'SELECT * FROM produtos WHERE categoria = $1 ORDER BY id DESC';
+  const params = categoria === 'all' ? [] : [categoria];
+  const result = await pool.query(query, params);
   return result.rows;
 });
 
@@ -112,28 +106,21 @@ app.get('/produtos/:categoria', async (req) => {
 app.post('/produtos', { preHandler: verificarAdmin }, async (req, reply) => {
   try {
     const parts = req.parts();
-    let nome, descricao, preco, categoria;
-    let imagemUrl = null;
+    let nome, descricao, preco, categoria, imagemUrl = null;
 
     for await (const part of parts) {
       if (part.file) {
-        // Upload no Supabase
         const buffer = await part.toBuffer();
-        const filename = `${randomUUID()}-${part.filename}`;
+        const fileName = `${uuidv4()}-${part.filename}`;
         const { error: uploadError } = await supabase.storage
-          .from('produtos') // nome do bucket
-          .upload(filename, buffer, {
-            contentType: part.mimetype,
-            upsert: false,
-          });
-
+          .from('produtos')
+          .upload(fileName, buffer, { contentType: part.mimetype, upsert: true });
         if (uploadError) throw uploadError;
 
-        const { data: publicUrlData } = supabase.storage
+        const { data } = supabase.storage
           .from('produtos')
-          .getPublicUrl(filename);
-
-        imagemUrl = publicUrlData.publicUrl;
+          .getPublicUrl(fileName);
+        imagemUrl = data.publicUrl;
       } else {
         if (part.fieldname === 'nome') nome = part.value;
         if (part.fieldname === 'descricao') descricao = part.value;
@@ -150,7 +137,7 @@ app.post('/produtos', { preHandler: verificarAdmin }, async (req, reply) => {
 
     reply.code(201).send(result.rows[0]);
   } catch (err) {
-    console.error('Erro ao cadastrar produto:', err);
+    console.error('Erro no upload:', err);
     reply.code(500).send({ error: 'Erro ao cadastrar produto' });
   }
 });
@@ -162,27 +149,21 @@ app.put('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) => {
   try {
     const { id } = req.params;
     const parts = req.parts();
-    let nome, descricao, preco, categoria;
-    let imagemUrl = null;
+    let nome, descricao, preco, categoria, imagemUrl = null;
 
     for await (const part of parts) {
       if (part.file) {
         const buffer = await part.toBuffer();
-        const filename = `${randomUUID()}-${part.filename}`;
+        const fileName = `${uuidv4()}-${part.filename}`;
         const { error: uploadError } = await supabase.storage
           .from('produtos')
-          .upload(filename, buffer, {
-            contentType: part.mimetype,
-            upsert: false,
-          });
-
+          .upload(fileName, buffer, { contentType: part.mimetype, upsert: true });
         if (uploadError) throw uploadError;
 
-        const { data: publicUrlData } = supabase.storage
+        const { data } = supabase.storage
           .from('produtos')
-          .getPublicUrl(filename);
-
-        imagemUrl = publicUrlData.publicUrl;
+          .getPublicUrl(fileName);
+        imagemUrl = data.publicUrl;
       } else {
         if (part.fieldname === 'nome') nome = part.value;
         if (part.fieldname === 'descricao') descricao = part.value;
@@ -191,9 +172,14 @@ app.put('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) => {
       }
     }
 
+    if (!imagemUrl) {
+      const old = await pool.query('SELECT imagem FROM produtos WHERE id=$1', [id]);
+      imagemUrl = old.rows[0]?.imagem || null;
+    }
+
     const result = await pool.query(
       `UPDATE produtos
-       SET nome=$1, descricao=$2, preco=$3, imagem=COALESCE($4, imagem), categoria=$5
+       SET nome=$1, descricao=$2, preco=$3, imagem=$4, categoria=$5
        WHERE id=$6 RETURNING *`,
       [nome, descricao, parseFloat(preco), imagemUrl, categoria, id]
     );
@@ -206,23 +192,37 @@ app.put('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) => {
 });
 
 // ======================
-// EXCLUIR PRODUTO
+// EXCLUIR PRODUTO + IMAGEM NO SUPABASE
 // ======================
 app.delete('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) => {
   try {
     const { id } = req.params;
+
+    // Buscar URL da imagem antes de apagar
+    const result = await pool.query('SELECT imagem FROM produtos WHERE id=$1', [id]);
+    const imagemUrl = result.rows[0]?.imagem;
+
+    // Apagar produto do banco
     await pool.query('DELETE FROM produtos WHERE id=$1', [id]);
-    reply.send({ message: 'Produto excluído com sucesso' });
+
+    // Se tiver imagem, apagar do Supabase
+    if (imagemUrl) {
+      const partes = imagemUrl.split('/');
+      const fileName = partes[partes.length - 1];
+      await supabase.storage.from('produtos').remove([fileName]);
+    }
+
+    reply.send({ message: 'Produto e imagem excluídos com sucesso' });
   } catch (err) {
-    console.error(err);
+    console.error('Erro ao excluir produto:', err);
     reply.code(500).send({ error: 'Erro ao excluir produto' });
   }
 });
 
-app.listen({
-  port: process.env.PORT || 3333,
-  host: '0.0.0.0',
-}).then(() => {
+// ======================
+// START SERVER
+// ======================
+app.listen({ port: process.env.PORT || 3333, host: '0.0.0.0' }).then(() => {
   console.log(`🚀 Servidor rodando em http://localhost:${process.env.PORT || 3333}`);
 });
 
