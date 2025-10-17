@@ -149,19 +149,54 @@ app.post('/produtos', { preHandler: verificarAdmin }, async (req, reply) => {
 });
 
 // ======================
-// EDITAR PRODUTO
+// EDITAR PRODUTO (com suporte a imagem)
 // ======================
 app.put('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) => {
   try {
     const { id } = req.params;
-    const fields = req.isMultipart() ? await req.body() : req.body;
-    const { nome, descricao, preco, categoria, imagem } = fields;
+    const parts = req.parts();
+
+    let nome, descricao, preco, categoria;
+    let imagemUrl = null; // só altera se enviar nova imagem
+
+    for await (const part of parts) {
+      if (part.file) {
+        const buffer = await part.toBuffer();
+        const fileName = `${Date.now()}-${part.filename}`;
+
+        const { data, error } = await supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .upload(fileName, buffer, {
+            contentType: part.mimetype,
+            upsert: false,
+          });
+
+        if (error) throw error;
+
+        const { data: publicUrlData } = supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .getPublicUrl(fileName);
+
+        imagemUrl = publicUrlData.publicUrl;
+      } else {
+        if (part.fieldname === 'nome') nome = part.value;
+        if (part.fieldname === 'descricao') descricao = part.value;
+        if (part.fieldname === 'preco') preco = part.value;
+        if (part.fieldname === 'categoria') categoria = part.value;
+      }
+    }
+
+    // pega imagem atual se não enviou nova
+    if (!imagemUrl) {
+      const { rows } = await pool.query('SELECT imagem FROM produtos WHERE id=$1', [id]);
+      imagemUrl = rows[0]?.imagem || null;
+    }
 
     const result = await pool.query(
       `UPDATE produtos
        SET nome=$1, descricao=$2, preco=$3, imagem=$4, categoria=$5
        WHERE id=$6 RETURNING *`,
-      [nome, descricao, parseFloat(preco), imagem, categoria, id]
+      [nome, descricao, parseFloat(preco), imagemUrl, categoria, id]
     );
 
     reply.send(result.rows[0]);
