@@ -246,6 +246,93 @@ app.delete('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) =
 });
 
 // ======================
+// DEPOIMENTOS (TESTIMONIALS)
+// ======================
+
+// 📢 PÚBLICO — lista apenas depoimentos aprovados (verified = true)
+app.get('/testimonials', async (req, reply) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM testimonials WHERE verified = true ORDER BY date DESC'
+    );
+    reply.send(rows);
+  } catch (err) {
+    console.error('Erro ao buscar depoimentos públicos:', err);
+    reply.code(500).send({ error: 'Erro ao carregar depoimentos' });
+  }
+});
+
+// 🧑‍💼 ADMIN — lista todos (inclusive não verificados)
+app.get('/admin/testimonials', { preHandler: verificarAdmin }, async (req, reply) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM testimonials ORDER BY date DESC');
+    reply.send(rows);
+  } catch (err) {
+    console.error('Erro ao buscar depoimentos (admin):', err);
+    reply.code(500).send({ error: 'Erro ao carregar depoimentos' });
+  }
+});
+
+// ✍️ Adicionar novo depoimento (público)
+app.post('/testimonials', async (req, reply) => {
+  try {
+    const { name, rating, comment } = req.body;
+
+    if (!name || !rating || !comment) {
+      return reply.code(400).send({ error: 'Campos obrigatórios ausentes' });
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO testimonials (name, rating, comment)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [name, rating, comment]
+    );
+
+    reply.code(201).send({
+      message: 'Depoimento enviado! Aguarde aprovação do administrador.',
+      testimonial: rows[0],
+    });
+  } catch (err) {
+    console.error('Erro ao salvar depoimento:', err);
+    reply.code(500).send({ error: 'Erro ao salvar depoimento' });
+  }
+});
+
+// ✅ ADMIN — aprovar depoimento
+app.put('/testimonials/:id/verify', { preHandler: verificarAdmin }, async (req, reply) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query(
+      'UPDATE testimonials SET verified = true WHERE id = $1 RETURNING *',
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return reply.code(404).send({ error: 'Depoimento não encontrado' });
+    }
+
+    reply.send({ message: 'Depoimento aprovado com sucesso!', testimonial: rows[0] });
+  } catch (err) {
+    console.error('Erro ao verificar depoimento:', err);
+    reply.code(500).send({ error: 'Erro ao verificar depoimento' });
+  }
+});
+
+// 🗑️ ADMIN — excluir depoimento
+app.delete('/testimonials/:id', { preHandler: verificarAdmin }, async (req, reply) => {
+  try {
+    const { id } = req.params;
+    await pool.query('DELETE FROM testimonials WHERE id = $1', [id]);
+    reply.send({ message: 'Depoimento excluído com sucesso.' });
+  } catch (err) {
+    console.error('Erro ao excluir depoimento:', err);
+    reply.code(500).send({ error: 'Erro ao excluir depoimento' });
+  }
+});
+
+
+// ======================
 // INICIAR SERVIDOR
 // ======================
 app.listen({ 
