@@ -23,11 +23,16 @@ const supabase = createClient(
 );
 
 const app = Fastify();
-app.register(cors, {
-  origin: '*',
+app.register(cors, (instance) => ({
+  origin: [
+    'http://localhost:5173',      // seu front local
+    'https://melindastore.github.io/MelindaStore/', // seu front em produção
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-});
-app.register(multipart);
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+}));
+
 
 // ======================
 // JWT MIDDLEWARE
