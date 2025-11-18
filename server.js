@@ -27,7 +27,12 @@ app.register(cors, {
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 });
-app.register(multipart);
+
+app.register(multipart, {
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB
+  }
+});
 
 // ======================
 // JWT MIDDLEWARE
