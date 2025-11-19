@@ -88,7 +88,7 @@ app.post('/login', async (req, reply) => {
 // LISTAR PRODUTOS
 // ======================
 app.get('/produtos', async () => {
-  const result = await pool.query('SELECT * FROM produtos ORDER BY id DESC');
+ const result = await pool.query("SELECT * FROM produtos ORDER BY created_at DESC");
   return result.rows;
 });
 
@@ -97,7 +97,7 @@ app.get('/produtos/:categoria', async (req) => {
   const query =
     categoria === 'all'
       ? 'SELECT * FROM produtos ORDER BY id DESC'
-      : 'SELECT * FROM produtos WHERE categoria = $1 ORDER BY id DESC';
+      : 'SELECT * FROM produtos WHERE categoria = $1 ORDER BY created_at DESC';
   const params = categoria === 'all' ? [] : [categoria];
   const result = await pool.query(query, params);
   return result.rows;
@@ -364,8 +364,4 @@ app.listen({
 }).then(() => {
   console.log(`🚀 Servidor rodando em http://localhost:${process.env.PORT || 3333}`);
 });
-
-
-
-
 
