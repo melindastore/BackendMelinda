@@ -9,9 +9,9 @@ import { createClient } from '@supabase/supabase-js';
 
 const { Pool } = pkg;
 
-// ======================
+// ===========
 // CONEXÕES
-// ======================
+// ===========
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
@@ -33,6 +33,7 @@ app.register(multipart, {
     fileSize: 10 * 1024 * 1024 // 10MB
   }
 });
+
 
 // ======================
 // JWT MIDDLEWARE
@@ -87,7 +88,7 @@ app.post('/login', async (req, reply) => {
 // LISTAR PRODUTOS
 // ======================
 app.get('/produtos', async () => {
-  const result = await pool.query('SELECT * FROM produtos ORDER BY id DESC');
+ const result = await pool.query("SELECT * FROM produtos ORDER BY created_at DESC");
   return result.rows;
 });
 
@@ -96,7 +97,7 @@ app.get('/produtos/:categoria', async (req) => {
   const query =
     categoria === 'all'
       ? 'SELECT * FROM produtos ORDER BY id DESC'
-      : 'SELECT * FROM produtos WHERE categoria = $1 ORDER BY id DESC';
+      : 'SELECT * FROM produtos WHERE categoria = $1 ORDER BY created_at DESC';
   const params = categoria === 'all' ? [] : [categoria];
   const result = await pool.query(query, params);
   return result.rows;
@@ -250,16 +251,19 @@ app.delete('/produtos/:id', { preHandler: verificarAdmin }, async (req, reply) =
   }
 });
 
-// ======================
+/// ======================
 // DEPOIMENTOS (TESTIMONIALS)
 // ======================
 
 // 📢 PÚBLICO — lista apenas depoimentos aprovados (verified = true)
 app.get('/testimonials', async (req, reply) => {
   try {
-    const { rows } = await pool.query(
-      'SELECT * FROM testimonials WHERE verified = true ORDER BY date DESC'
-    );
+    const { rows } = await pool.query(`
+      SELECT id, name, rating, comment, verified, date
+      FROM testimonials
+      WHERE verified = true
+      ORDER BY date DESC
+    `);
     reply.send(rows);
   } catch (err) {
     console.error('Erro ao buscar depoimentos públicos:', err);
@@ -270,7 +274,11 @@ app.get('/testimonials', async (req, reply) => {
 // 🧑‍💼 ADMIN — lista todos (inclusive não verificados)
 app.get('/admin/testimonials', { preHandler: verificarAdmin }, async (req, reply) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM testimonials ORDER BY date DESC');
+    const { rows } = await pool.query(`
+      SELECT id, name, rating, comment, verified, date
+      FROM testimonials
+      ORDER BY date DESC
+    `);
     reply.send(rows);
   } catch (err) {
     console.error('Erro ao buscar depoimentos (admin):', err);
@@ -287,11 +295,16 @@ app.post('/testimonials', async (req, reply) => {
       return reply.code(400).send({ error: 'Campos obrigatórios ausentes' });
     }
 
+    // garante que rating é número
+    const numericRating = parseInt(rating, 10);
+
     const { rows } = await pool.query(
-      `INSERT INTO testimonials (name, rating, comment)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [name, rating, comment]
+      `
+      INSERT INTO testimonials (name, rating, comment, verified, date)
+      VALUES ($1, $2, $3, false, NOW())
+      RETURNING id, name, rating, comment, verified, date
+      `,
+      [name, numericRating, comment]
     );
 
     reply.code(201).send({
@@ -309,7 +322,12 @@ app.put('/testimonials/:id/verify', { preHandler: verificarAdmin }, async (req, 
   try {
     const { id } = req.params;
     const { rows } = await pool.query(
-      'UPDATE testimonials SET verified = true WHERE id = $1 RETURNING *',
+      `
+      UPDATE testimonials
+      SET verified = true
+      WHERE id = $1
+      RETURNING id, name, rating, comment, verified, date
+      `,
       [id]
     );
 
@@ -346,8 +364,6 @@ app.listen({
 }).then(() => {
   console.log(`🚀 Servidor rodando em http://localhost:${process.env.PORT || 3333}`);
 });
-
-
 
 
 
